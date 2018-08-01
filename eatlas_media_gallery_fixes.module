@@ -1,0 +1,494 @@
+<?php
+/**
+ * Return the list of protected folders.
+ * Protected folders are folders that automatically check the
+ * "field_restricted_access" checkbox (on the file update form)
+ * to disable the file's public page.
+ */
+function _eatlas_media_gallery_fixes_get_protected_folders() {
+	$folder_names = array(
+		'people',
+		'file_preview'
+	);
+
+	$folders = array();
+	foreach($folder_names as $folder_name) {
+		$folder = taxonomy_get_term_by_name($folder_name);
+		if ($folder) {
+			// The folder is an associative array. The + operator merge
+			// the 2 arrays without renumbering the keys.
+			$folders += $folder;
+		}
+	}
+
+	return $folders;
+}
+
+/**
+ * Implements hook_theme().
+ * Register the template media-item-details.tpl.php
+ */
+function eatlas_media_gallery_fixes_theme() {
+	return array(
+		'media_item_details' => array(
+			'template' => 'templates/media-item-details'
+		),
+		'eatlas_media_gallery_fixes_license' => array(
+			'variables' => array('element' => NULL, 'color' => 'dark')
+		),
+		'eatlas_media_gallery_fixes_attribution' => array(
+			'variables' => array('prefix' => '', 'file' => NULL)
+		)
+	);
+}
+
+/*
+// Implement hook_file_insert
+// https://api.drupal.org/api/drupal/modules%21system%21system.api.php/function/hook_file_insert/7
+function eatlas_media_gallery_fixes_file_insert($file) {
+	// "eatlas_media_gallery_fixes_set_image_metadata" is defined in "includes/eatlas_media_gallery_fixes_image_metadata.inc"
+	eatlas_media_gallery_fixes_set_image_metadata($file);
+}
+*/
+
+/**
+ * Implement hook_menu_alter(&$items)
+ * Modify the functions called to generate the detailed page,
+ * for both media module and media-gallery module.
+ */
+function eatlas_media_gallery_fixes_menu_alter(&$items) {
+	$items['media/%file']['page callback'] = '_eatlas_media_gallery_fixes_view_page';
+	$items['media-gallery/detail/%node/%file']['page callback'] = '_eatlas_media_gallery_fixes_gallery_detail_page';
+}
+
+/**
+ * Called in the template:
+ *     theme('eatlas_media_gallery_fixes_license', array('file' => $file, 'color' => 'dark'));
+ * This function can be overriden in the site theme.
+ */
+function theme_eatlas_media_gallery_fixes_license($variables) {
+	if (!isset($variables['file'])) {
+		return '';
+	}
+
+	$file = $variables['file'];
+	// Don't display license information for externally hosted media. See
+	//   media_gallery_field_attach_form().
+	// @todo Implement a more generic determination for when a license applies
+	//   and when it doesn't.
+	if (file_uri_scheme($file->uri) == 'youtube') {
+		return '';
+	}
+
+	$license = _eatlas_media_gallery_fixes_get_file_raw_value($file, 'field_license');
+	$customLicense = _eatlas_media_gallery_fixes_get_file_raw_value($file, 'field_custom_license');
+	$licenseNotes = _eatlas_media_gallery_fixes_get_file_rendered_value($file, 'field_notes'); // TODO Not doing anything with this!!
+
+	if (!$license) {
+		$license = 'none';
+	}
+	$color = $variables['color'];
+
+	// Open a wrapper around the icons.
+	$output = '<span class="media-license ' . $color . '">';
+
+	if ($customLicense) {
+		$output .= 'Licensed under <span class="custom">' . $customLicense . '</span>';
+		$output .= theme_eatlas_media_gallery_fixes_attribution(array('prefix' => ' by ', 'file' => $file));
+	} else {
+		switch ($license) {
+			case 'cc_sa_nc':
+				$output .= '<span class="' . $license . '" title="' . t('Attribution, Non-Commercial, Share Alike') . '"></span>';
+				$output .= theme_eatlas_media_gallery_fixes_attribution(array('prefix' => ' by ', 'file' => $file));
+				break;
+			case 'cc_nc':
+				$output .= '<span class="' . $license . '" title="' . t('Attribution, Non-Commercial') . '"></span>';
+				$output .= theme_eatlas_media_gallery_fixes_attribution(array('prefix' => ' by ', 'file' => $file));
+				break;
+			case 'cc_nd_nc':
+				$output .= '<span class="' . $license . '" title="' . t('Attribution, Non-Commercial, No Derivative Works') . '"></span>';
+				$output .= theme_eatlas_media_gallery_fixes_attribution(array('prefix' => ' by ', 'file' => $file));
+				break;
+			case 'cc':
+				$output .= '<span class="' . $license . '" title="' . t('Attribution') . '"></span>';
+				$output .= theme_eatlas_media_gallery_fixes_attribution(array('prefix' => ' by ', 'file' => $file));
+				break;
+			case 'cc_sa':
+				$output .= '<span class="' . $license . '" title="' . t('Attribution, Share Alike') . '"></span>';
+				$output .= theme_eatlas_media_gallery_fixes_attribution(array('prefix' => ' by ', 'file' => $file));
+				break;
+			case 'cc_nd':
+				$output .= '<span class="' . $license . '" title="' . t('Attribution, No Derivative Works') . '"></span>';
+				$output .= theme_eatlas_media_gallery_fixes_attribution(array('prefix' => ' by ', 'file' => $file));
+				break;
+			default:
+				$output .= '<span class="copyright" title="' . t('All rights reserved') . '">&copy;</span>';
+				$output .= theme_eatlas_media_gallery_fixes_attribution(array('prefix' => ' courtesy ', 'file' => $file));
+		}
+	}
+
+	$licenseClass = $license;
+	if ($license === 'none') {
+		$licenseClass = 'copyright';
+		if ($customLicense) {
+			$licenseClass = 'custom';
+		}
+	}
+
+	if ($licenseClass === 'custom') {
+		$output .= '<span class="attribution" title="Attribution"></span>';
+	}
+
+	$output .= '</span>';
+
+	return $output;
+}
+
+// $entity is either Person, Organisation or Organisation section
+function _eatlas_media_gallery_fixes_get_entity_markup($entity) {
+	$attributionMarkup = '';
+	if ($entity) {
+		$attributionLink = url('node/' . $entity->nid);
+		if ($attributionLink) {
+			$attributionMarkup .= '<a href="' . $attributionLink . '">';
+		}
+
+		$name = $entity->title;
+		$field_abbr = field_get_items('node', $entity, 'field_abbr');
+		if ($field_abbr) {
+			$field_abbr_value = field_view_value('node', $entity, 'field_abbr', $field_abbr[0]);
+			$name = render($field_abbr_value);
+		}
+
+		$attributionMarkup .= $name;
+
+		if ($attributionLink) {
+			$attributionMarkup .= '</a>';
+		}
+	}
+	return $attributionMarkup;
+}
+
+function theme_eatlas_media_gallery_fixes_attribution($variables) {
+  if (!isset($variables['file']) || $variables{'file'} === NULL) {
+    return '';
+  } else {
+    $file = $variables['file'];
+  }
+  $prefix = isset($variables['prefix']) ? $variables['prefix'] : '';
+
+	$attribution_nids = MediaFrameAbstractFileWrapper::getFileObjectAttributeValues($file, 'field_attribution', 'nid');
+	$attribution_text = MediaFrameAbstractFileWrapper::getFileObjectAttributeValue($file, 'field_custom_attribution', 'value', NULL);
+
+	$attributionMarkup = '';
+	$separator = $prefix;
+
+	$lastEntity = NULL;
+	for ($i=0, $length=count($attribution_nids); $i<$length; $i++) {
+		$attribution_nid = $attribution_nids[$i];
+		if ($attribution_nid) {
+			$entity = node_load($attribution_nid);
+
+			// If we have a Person following by an organisation, the organisation goes in brackets:
+			//     John Doe (AIMS)
+			if ($lastEntity !== NULL && $lastEntity->type === 'person' && ($entity->type === 'organisation' || $entity->type === 'organisation_section')) {
+				$attributionMarkup .= ' (' . _eatlas_media_gallery_fixes_get_entity_markup($entity) . ')';
+			} else {
+				$attributionMarkup .= $separator;
+				$separator = ', ';
+
+				$attributionMarkup .= _eatlas_media_gallery_fixes_get_entity_markup($entity);
+			}
+			$lastEntity = $entity;
+		}
+	}
+
+	if ($attribution_text) {
+		$attributionMarkup .= $separator . $attribution_text;
+		$separator = ', ';
+	}
+
+	return $attributionMarkup;
+}
+
+/**
+ * Implement hook_file_update
+ * Every time a file is moved (or created) into a protected folder
+ * (see "_eatlas_media_gallery_fixes_get_protected_folders"), the file
+ * "field_restricted_access" field's value is changed to disable its
+ * public page.
+ * https://api.drupal.org/api/drupal/modules%21system%21system.api.php/function/hook_file_update/7
+ */
+function eatlas_media_gallery_fixes_file_update($file) {
+	if (property_exists($file, 'field_folder') && isset($file->field_folder[LANGUAGE_NONE][0]['tid'])) {
+		$folder_id = (int)$file->field_folder[LANGUAGE_NONE][0]['tid'];
+		$protected_folders = _eatlas_media_gallery_fixes_get_protected_folders();
+		if (!empty($protected_folders)) {
+			foreach($protected_folders as $protected_folder_id => $protected_folder) {
+				if ($protected_folder_id === $folder_id) {
+					// Protect the file
+					_eatlas_media_gallery_fixes_set_file_values($file, 'field_restricted_access', TRUE);
+					break;
+				}
+			}
+		}
+	}
+}
+
+
+/**
+ * Generate the detailed media item page using the media-item-details.tpl.php template,
+ * for media module.
+ * Original template defined in:
+ *     File: media/includes/media.pages.inc
+ *     Function: media_view_page($file)
+ *     The object is then process by Drupal using the generic page.tpl.php template
+ */
+function _eatlas_media_gallery_fixes_view_page($file) {
+	$enlargeDisabled = _eatlas_media_gallery_fixes_get_file_attribute_value($file, 'field_restricted_access', 'value');
+	if ($enlargeDisabled && !user_is_logged_in()) {
+		return MENU_ACCESS_DENIED;
+	}
+
+	$variables = _eatlas_media_gallery_fixes_get_file_variables($file);
+	$variables['module'] = 'media';
+
+	$download_link = $file->type == 'image' ? theme('media_gallery_download_link', array('file' => $file)) : '&nbsp;';
+
+	$variables['download_link'] = $download_link;
+
+	return theme('media_item_details', $variables);
+}
+
+/**
+ * Generate the detailed media item page using the media-item-details.tpl.php template
+ * for media_gallery module.
+ * Original template defined in:
+ *     File: media_gallery/media_gallery.theme.inc
+ *     Function: theme_media_gallery_media_item_detail($variables)
+ */
+function _eatlas_media_gallery_fixes_gallery_detail_page($gallery_node, $file) {
+	$enlargeDisabled = _eatlas_media_gallery_fixes_get_file_attribute_value($file, 'field_restricted_access', 'value');
+	if ($enlargeDisabled && !user_is_logged_in()) {
+		return MENU_ACCESS_DENIED;
+	}
+
+	$node_url_arguments = entity_uri('node', $gallery_node);
+
+	// Get the "All galleries" URL - the default is "galleries"
+	// The path is actually a taxonomy term alias... (took me a few hours to find out how to get this variable)
+	$tid = variable_get('media_gallery_default_collection_tid');
+	$allGalleriesURL = drupal_lookup_path('alias', 'taxonomy/term/'.$tid);
+
+	drupal_set_breadcrumb(array(
+		l(t('Home'), NULL),
+		l(t('Galleries'), $allGalleriesURL),
+		l($gallery_node->title, $node_url_arguments['path'], $node_url_arguments['options'])
+	));
+
+	//drupal_set_breadcrumb(array(
+	//	l(t('Home'), NULL),
+	//	l(t('Galleries'), NULL),
+	//	l($gallery_node->title, $node_url_arguments['path'], $node_url_arguments['options']),
+	//));
+
+	$variables = _eatlas_media_gallery_fixes_get_file_variables($file);
+	$variables['module'] = 'media_gallery';
+
+	// Page number for next and previous pages and current page.
+	$i_next = NULL;
+	$i_previous = NULL;
+	$i_current = NULL;
+
+	// Not considering the possibility of this field being translatable, at the
+	// moment. Is there a use-case for a media field (which is just a reference to
+	// a media entity) to be translatable?
+	$media_ids = array();
+	foreach ($gallery_node->media_gallery_media[LANGUAGE_NONE] as $delta => $item) {
+		$media_ids[] = _media_gallery_get_media_fid($item);
+	}
+	$media_ids = array_values(array_unique($media_ids));
+
+	// Get the variables needed for previous and next buttons and "Image X of Y"
+	// text.
+	$num_items = count($media_ids);
+	foreach ($media_ids as $i => $id) {
+		if ($id == $file->fid) {
+			$i_current = $i;
+			break;
+		}
+	}
+
+	$i_previous = $i_current - 1;
+	$i_next = $i_current + 1;
+
+	if ($i_previous < 0) {
+		$i_previous = NULL;
+	}
+
+	$i_next = $i_current + 1;
+	if ($i_next > $num_items - 1) {
+		$i_next = NULL;
+	}
+
+	if (_eatlas_media_gallery_fixes_get_array_value($gallery_node, 'media_gallery_allow_download')) {
+		$download_link = $file->type == 'image' ? theme('media_gallery_download_link', array('file' => $file)) : '&nbsp;';
+	} else {
+		// Very ugly fix: This prevents the license info from being either hidden
+		// or causing scrollbars (depending on the browser) in cases where a
+		// download link is not being shown. There may be a CSS-only fix for this,
+		// but we haven't found one yet.
+		$download_link = '&nbsp;';
+	}
+
+	$previous_link = !is_null($i_previous) ? l(t('« Previous'), "media-gallery/detail/{$gallery_node->nid}/{$media_ids[$i_previous]}", array('html' => TRUE, 'attributes' => array('class' => 'prev'))) : '<span class="prev-disabled">' . t('« Previous') . '</span>';
+	$next_link = !is_null($i_next) ? l(t('Next »'), "media-gallery/detail/{$gallery_node->nid}/{$media_ids[$i_next]}", array('html' => TRUE, 'attributes' => array('class' => 'next'))) : '<span class="next-disabled">' . t('Next »') . '</span>';
+
+	$variables['download_link'] = $download_link;
+	$variables['gallery_node'] = $gallery_node;
+	$variables['i_current'] = $i_current;
+	$variables['num_items'] = $num_items;
+	$variables['previous_link'] = $previous_link;
+	$variables['next_link'] = $next_link;
+
+	return theme('media_item_details', $variables);
+}
+
+
+function _eatlas_media_gallery_fixes_get_array_value($array, $key) {
+	if (class_exists('MediaFrameAbstractFileWrapper')) {
+		if (!is_array($array)) {
+			$array = (array)$array;
+		}
+		return MediaFrameAbstractFileWrapper::getArrayValue($array, $key);
+	}
+	return _eatlas_media_gallery_fixes_get_value_fallback($array, $key);
+}
+
+function _eatlas_media_gallery_fixes_get_file_attribute_value($file, $key, $attribute) {
+	if (class_exists('MediaFrameAbstractFileWrapper')) {
+		return MediaFrameAbstractFileWrapper::getFileObjectAttributeValue($file, $key, $attribute);
+	}
+	return _eatlas_media_gallery_fixes_get_value_fallback($file, $key, $attribute);
+}
+
+function _eatlas_media_gallery_fixes_get_file_attribute_values($file, $key, $attribute) {
+	if (class_exists('MediaFrameAbstractFileWrapper')) {
+		return MediaFrameAbstractFileWrapper::getFileObjectAttributeValues($file, $key, $attribute);
+	}
+	// TODO _eatlas_media_gallery_fixes_get_values_fallback
+	return NULL;
+}
+
+function _eatlas_media_gallery_fixes_get_file_rendered_value($file, $key) {
+	$field_view = field_view_field('file', $file, $key);
+	return render($field_view);
+}
+
+function _eatlas_media_gallery_fixes_get_file_raw_value($file, $key) {
+	return eatlas_commons_get_entity_value('file', $file, $key);
+}
+
+/*
+function _eatlas_media_gallery_fixes_get_array_value($array, $key) {
+	if (class_exists('MediaFrameAbstractFileWrapper')) {
+		if (!is_array($array)) {
+			$array = (array)$array;
+		}
+		return MediaFrameAbstractFileWrapper::getArrayValue($array, $key);
+	}
+	return _eatlas_media_gallery_fixes_get_value_fallback($array, $key);
+}
+
+function _eatlas_media_gallery_fixes_get_file_attribute_value($file, $key, $attribute) {
+	if (class_exists('MediaFrameAbstractFileWrapper')) {
+		return MediaFrameAbstractFileWrapper::getFileObjectAttributeValue($file, $key, $attribute);
+	}
+	return _eatlas_media_gallery_fixes_get_value_fallback($file, $key, $attribute);
+}
+
+function _eatlas_media_gallery_fixes_get_file_attribute_values($file, $key, $attribute) {
+	if (class_exists('MediaFrameAbstractFileWrapper')) {
+		return MediaFrameAbstractFileWrapper::getFileObjectAttributeValues($file, $key, $attribute);
+	}
+	// TODO _eatlas_media_gallery_fixes_get_values_fallback
+	return NULL;
+}
+
+function _eatlas_media_gallery_fixes_get_file_value($file, $key) {
+	if (class_exists('MediaFrameAbstractFileWrapper')) {
+		return MediaFrameAbstractFileWrapper::getFileObjectValue($file, $key);
+	}
+	return _eatlas_media_gallery_fixes_get_value_fallback($file, $key);
+}
+
+/ * Fallback function called when the module media_gallery_frame is not loaded. * /
+function _eatlas_media_gallery_fixes_get_value_fallback($variable, $key, $attribute = NULL) {
+	if ($variable) {
+		$array = (array)$variable;
+
+		if (isset($array[$key]) && isset($array[$key][LANGUAGE_NONE]) && isset($array[$key][LANGUAGE_NONE][0])) {
+			$value = $array[$key][LANGUAGE_NONE][0];
+
+			if ($attribute) {
+				if (isset($value[$attribute])) {
+					return $value[$attribute];
+				}
+			} else {
+				if (isset($value['value'])) {
+					return $value['value'];
+				}
+				if (isset($value['safe_value'])) {
+					return $value['safe_value'];
+				}
+			}
+		}
+	}
+
+	return null;
+}
+*/
+
+function _eatlas_media_gallery_fixes_set_file_values($file, $key, $values = NULL, $field = 'value') {
+	// WARNING: Avoid ambuigity! The array operator ([]) has priority
+	//     over the object property operator (->).
+	//         $file->$key[LANGUAGE_NONE]    means  $file->{$key[LANGUAGE_NONE]}
+	//     Solution: Always use $file->{$key}.
+	//         $file->{$key}[LANGUAGE_NONE]  means  {$file->$key}[LANGUAGE_NONE]
+	if ($file) {
+		if ($values === NULL) {
+			if (isset($file->{$key})) {
+				unset($file->{$key});
+			}
+		} else {
+			if (!isset($file->{$key}) || !is_array($file->{$key})) {
+				$file->{$key} = array();
+			}
+			// Whip previous values
+			$file->{$key}[LANGUAGE_NONE] = array();
+			if (!is_array($values)) {
+				$values = array($values);
+			}
+			foreach ($values as $value) {
+				if ($value !== NULL) {
+					array_push(
+						$file->{$key}[LANGUAGE_NONE],
+						array($field => $value)
+					);
+				}
+			}
+		}
+	}
+}
+
+function _eatlas_media_gallery_fixes_get_file_variables($file) {
+	return array(
+		'file' => $file,
+		'description' => _eatlas_media_gallery_fixes_get_file_rendered_value($file, 'media_description'),
+//		'description' => render(field_view_field('file', $file, 'media_description', '')),
+		'title' => _eatlas_media_gallery_fixes_get_file_raw_value($file, 'media_title'),
+		'license' => _eatlas_media_gallery_fixes_get_file_raw_value($file, 'field_license'),
+		'notes' => _eatlas_media_gallery_fixes_get_file_rendered_value($file, 'field_notes')
+	);
+}
+?>

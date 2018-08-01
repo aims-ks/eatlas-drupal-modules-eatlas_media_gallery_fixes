@@ -1,0 +1,18 @@
+; $Id$
+name = eAtlas Media gallery fixes
+description = [eatlas_media_gallery_fixes] Fix issues in media gallery, such as not using media template to display image details.
+core = 7.x
+
+files[] = eatlas_media_gallery_fixes.module
+
+stylesheets[all][] = css/eatlas_media_gallery_fixes.css
+
+package = eAtlas
+
+dependencies[] = media
+
+; Attributes used by the update module.
+; There fields needs to be removed if the module is migrated to Drupal.org
+project status url = "http://drupal.eatlas.org.au/modules/eatlas"
+version = "7.x-1.2"
+project = "eatlas_media_gallery_fixes"
