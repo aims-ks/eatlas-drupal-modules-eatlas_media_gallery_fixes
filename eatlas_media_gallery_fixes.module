@@ -184,7 +184,8 @@ function theme_eatlas_media_gallery_fixes_attribution($variables) {
 	$separator = $prefix;
 
 	$lastEntity = NULL;
-	for ($i=0, $length=count($attribution_nids); $i<$length; $i++) {
+	$nidsCount = $attribution_nids ? count($attribution_nids) : 0;
+	for ($i=0; $i<$nidsCount; $i++) {
 		$attribution_nid = $attribution_nids[$i];
 		if ($attribution_nid) {
 			$entity = node_load($attribution_nid);
